@@ -35,11 +35,23 @@ button.ghost{background:transparent;color:var(--gold);border:1px solid var(--gol
 .x,.flip{position:absolute;top:calc(env(safe-area-inset-top) + 8px);width:40px;height:40px;border-radius:50%;background:#000a;color:var(--gold);border:1px solid var(--gold);padding:0;font-size:18px}
 .x{left:10px}.flip{right:10px}
 #toast{position:fixed;left:16px;right:16px;bottom:24px;background:#222;border:1px solid var(--gold);border-radius:10px;padding:12px;display:none;z-index:20;font-size:14px}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid #333;background:#0b0b0b;color:#fff;font-size:15px;margin:8px 0}
+.tabs{display:flex;gap:10px;margin:14px 0}.tabs button{flex:1}
+button.st{background:#121212;border:1px solid #2a2a2a;border-radius:12px;padding:12px;margin-bottom:8px;text-align:left;color:#fff;width:100%;font-weight:400}
+button.st.on{border-color:var(--gold);background:#1c1807}
+.st b{display:block;font-size:16px}.st small{color:#9a9a9a;font-size:13px}
+.badge{float:right;color:#000;background:var(--gold);border-radius:6px;font-size:11px;padding:2px 6px;font-weight:700}
+.res{background:#121212;border-radius:12px;padding:10px;margin-top:14px}.res h3{margin:0 0 8px;color:var(--gold);font-size:15px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.grid3 img{width:100%;border-radius:8px;display:block}
+.grid3 .ph{aspect-ratio:3/4;background:#222;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#777;font-size:12px;text-align:center}
+.grid3 a{color:var(--gold);font-size:12px;display:block;text-align:center;margin-top:4px}
+#pick,#prog{color:#bbb;font-size:14px;margin:10px 0}
 </style>
 </head>
 <body>
 <h1>csvisagismo</h1>
 <div id="status">Carregando IA…</div>
+<div id="v1">
 <div id="steps"></div>
 
 <div id="result" class="card">
@@ -52,6 +64,23 @@ button.ghost{background:transparent;color:var(--gold);border:1px solid var(--gol
 <div class="row">
   <button id="next" disabled>Continuar</button>
   <button id="reset" class="ghost">Novo cliente</button>
+</div>
+</div>
+
+<div id="v2" style="display:none">
+  <button id="back" class="ghost" style="margin-bottom:12px">← Voltar às fotos</button>
+  <div class="card" style="flex-direction:column;align-items:stretch">
+    <b>Chave da IA (Google AI Studio)</b>
+    <small>Fica salva só neste celular.</small>
+    <input id="key" type="password" placeholder="Cole sua chave aqui" autocomplete="off">
+    <button id="savekey">Salvar chave</button>
+  </div>
+  <div class="tabs"><button id="tHair">Cabelo</button><button id="tBeard" class="ghost">Barba</button></div>
+  <div id="catalog"></div>
+  <div id="pick"></div>
+  <button id="gen" style="width:100%">Gerar nos 3 ângulos</button>
+  <div id="prog"></div>
+  <div id="results"></div>
 </div>
 
 <div id="cam">
@@ -160,8 +189,111 @@ $('shot').onclick = ()=>{
   render();
 };
 
-$('next').onclick = ()=>toast('Próxima etapa: escolher estilos e gerar variações.');
-$('reset').onclick = ()=>{ for(const k in photos) delete photos[k]; frontShape=null; render(); };
+$('next').onclick = ()=>showStyles();
+$('reset').onclick = ()=>{ for(const k in photos) delete photos[k]; frontShape=null; sel={hair:null,beard:null}; $('results').innerHTML=''; render(); };
+
+
+// ---------- Estilos e geração ----------
+const HAIR=[
+ {id:'dm',n:'Degradê médio',d:'Laterais curtas, topo texturizado',p:'a mid skin fade on the sides and back with a medium-length textured top'},
+ {id:'db',n:'Degradê baixo',d:'Transição discreta, visual limpo',p:'a low fade on the sides and back with a short neat top'},
+ {id:'so',n:'Social',d:'Risca lateral clássica',p:'a classic side part with short tapered sides'},
+ {id:'po',n:'Pompadour',d:'Volume no topo',p:'a pompadour with volume on top and short faded sides'},
+ {id:'tx',n:'Texturizado',d:'Topo solto, franja curta',p:'a textured crop with a short fringe and tapered sides'},
+ {id:'fh',n:'Moicano',d:'Topo alto, laterais baixas',p:'a faux hawk with faded sides'},
+ {id:'mi',n:'Raspado',d:'Corte militar bem curto',p:'a very short buzz cut'}
+];
+const BEARD=[
+ {id:'none',n:'Sem barba',d:'Rosto liso',p:'completely clean-shaven, no beard and no stubble'},
+ {id:'re',n:'Barba rente',d:'Curtíssima e uniforme',p:'a very short, even stubble beard'},
+ {id:'ap',n:'Barba aparada',d:'Curta e bem desenhada',p:'a short full beard, neatly trimmed'},
+ {id:'ch',n:'Barba cheia',d:'Média, cuidada',p:'a full medium-length beard, well groomed'},
+ {id:'cv',n:'Cavanhaque',d:'Só queixo e bigode',p:'a goatee with clean-shaven cheeks'},
+ {id:'de',n:'Barba desenhada',d:'Contornos bem marcados',p:'a sharply lined-up beard with crisp cheek and neck lines'}
+];
+const SUG={
+ 'Oval':{hair:['dm','so'],beard:['ap']},
+ 'Redondo':{hair:['po','fh'],beard:['cv','ch']},
+ 'Quadrado':{hair:['tx','db'],beard:['re']},
+ 'Retangular':{hair:['db','tx'],beard:['ch']},
+ 'Oblongo':{hair:['db','tx'],beard:['ch']},
+ 'Coração (triangular invertido)':{hair:['tx','so'],beard:['ch']},
+ 'Triangular (pera)':{hair:['po','tx'],beard:['re','ap']},
+ 'Diamante':{hair:['dm','tx'],beard:['ch']}
+};
+let sel={hair:null,beard:null}, tab='hair', busy=false;
+const store={
+  get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},
+  set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}
+};
+function showStyles(){
+  if(Object.keys(photos).length<3) return;
+  $('v1').style.display='none'; $('v2').style.display='block';
+  $('key').placeholder = store.get('cs_key') ? 'Chave salva neste celular ✓' : 'Cole sua chave aqui';
+  renderCatalog(); window.scrollTo(0,0);
+}
+$('back').onclick=()=>{ $('v2').style.display='none'; $('v1').style.display='block'; };
+$('savekey').onclick=()=>{ const v=$('key').value.trim(); if(!v) return toast('Cole a chave primeiro.'); store.set('cs_key',v); $('key').value=''; $('key').placeholder='Chave salva neste celular ✓'; toast('Chave salva neste celular.'); };
+$('tHair').onclick=()=>{ tab='hair'; $('tHair').className=''; $('tBeard').className='ghost'; renderCatalog(); };
+$('tBeard').onclick=()=>{ tab='beard'; $('tBeard').className=''; $('tHair').className='ghost'; renderCatalog(); };
+function renderCatalog(){
+  const list = tab==='hair'?HAIR:BEARD;
+  const sug = ((frontShape && SUG[frontShape.shape])||{})[tab]||[];
+  let h = '<button class="st'+(sel[tab]===null?' on':'')+'" data-id=""><b>Manter o atual</b><small>Não muda '+(tab==='hair'?'o cabelo':'a barba')+'</small></button>';
+  h += list.map(x=>'<button class="st'+(sel[tab]===x.id?' on':'')+'" data-id="'+x.id+'">'+(sug.includes(x.id)?'<span class="badge">Sugerido</span>':'')+'<b>'+x.n+'</b><small>'+x.d+'</small></button>').join('');
+  $('catalog').innerHTML=h;
+  $('catalog').querySelectorAll('button').forEach(b=>b.onclick=()=>{ sel[tab]=b.dataset.id||null; renderCatalog(); });
+  const hn=HAIR.find(x=>x.id===sel.hair), bn=BEARD.find(x=>x.id===sel.beard);
+  $('pick').textContent='Cabelo: '+(hn?hn.n:'atual')+' · Barba: '+(bn?bn.n:'atual');
+}
+function buildPrompt(){
+  const h=HAIR.find(x=>x.id===sel.hair), b=BEARD.find(x=>x.id===sel.beard), ch=[];
+  if(h) ch.push('his hairstyle to '+h.p);
+  if(b) ch.push('his beard to '+b.p);
+  return 'Edit this photo of a real man. Change ONLY '+ch.join(' and ')+'. Keep absolutely everything else identical: the face and facial features, skin tone, expression, head pose and angle, ears, eyebrows, clothing, background, lighting and framing. Do not change his identity. Photorealistic, natural result, same photo quality.';
+}
+async function callAI(dataUrl, prompt){
+  const key=store.get('cs_key'); if(!key) throw new Error('Salve a chave da IA primeiro.');
+  const model=store.get('cs_model')||'gemini-2.5-flash-image';
+  const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','x-goog-api-key':key},
+    body:JSON.stringify({contents:[{parts:[{text:prompt},{inlineData:{mimeType:'image/jpeg',data:dataUrl.split(',')[1]}}]}],generationConfig:{responseModalities:['TEXT','IMAGE']}})
+  });
+  const j=await r.json().catch(()=>({}));
+  if(!r.ok) throw new Error((j.error&&j.error.message)||('Erro '+r.status));
+  const parts=(j.candidates&&j.candidates[0]&&j.candidates[0].content&&j.candidates[0].content.parts)||[];
+  const img=parts.find(x=>x.inlineData||x.inline_data);
+  if(!img) throw new Error('A IA não devolveu imagem. Tente de novo ou escolha outro estilo.');
+  const d=img.inlineData||img.inline_data;
+  return 'data:'+(d.mimeType||d.mime_type||'image/png')+';base64,'+d.data;
+}
+$('gen').onclick=async()=>{
+  if(busy) return;
+  if(!sel.hair && !sel.beard) return toast('Escolha um cabelo ou uma barba.');
+  if(!store.get('cs_key')) return toast('Cole e salve a chave da IA primeiro.');
+  busy=true; $('gen').disabled=true;
+  const hn=HAIR.find(x=>x.id===sel.hair), bn=BEARD.find(x=>x.id===sel.beard);
+  const title=[hn&&hn.n, bn&&bn.n].filter(Boolean).join(' + ');
+  const box=document.createElement('div'); box.className='res';
+  box.innerHTML='<h3>'+title+'</h3><div class="grid3">'+STEPS.map(s=>'<div><div class="ph" id="ph_'+s.id+'">Aguardando</div></div>').join('')+'</div>';
+  const old=document.createElement('div'); // ids únicos por variação
+  const stamp=Date.now(); box.querySelectorAll('.ph').forEach(e=>e.id=e.id+'_'+stamp);
+  $('results').prepend(box);
+  const pr=buildPrompt(); let ok=0;
+  for(let i=0;i<STEPS.length;i++){
+    const s=STEPS[i], ph=document.getElementById('ph_'+s.id+'_'+stamp);
+    $('prog').textContent='Gerando '+(i+1)+' de 3 ('+s.label.split(' ')[0]+')… pode levar alguns segundos';
+    ph.textContent='Gerando…';
+    try{
+      const out=await callAI(photos[s.id],pr);
+      ph.parentNode.innerHTML='<img src="'+out+'" alt="'+s.label+'"><a download="csvisagismo-'+s.id+'.png" href="'+out+'">Salvar</a>';
+      ok++;
+    }catch(e){ ph.textContent='Erro'; toast(e.message); if(/quota|429|key|API_KEY|permission/i.test(e.message)) break; }
+  }
+  $('prog').textContent = ok===3?'Pronto!':(ok?'Concluído com '+ok+' de 3 imagens.':'Não foi possível gerar. Veja o aviso acima.');
+  busy=false; $('gen').disabled=false;
+};
 
 render();
 if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
