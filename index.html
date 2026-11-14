@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>csvisagismo</title>
+<style>
+:root{--gold:#d4af37;--card:#121212}
+*{box-sizing:border-box}
+body{margin:0;background:#000;color:#fff;font-family:system-ui,sans-serif;padding:calc(env(safe-area-inset-top) + 8px) 16px 40px}
+h1{color:var(--gold);font-size:22px;margin:14px 0 4px}
+#status{color:#888;font-size:12px;margin-bottom:14px}
+.card{background:var(--card);border-radius:12px;padding:12px;margin-bottom:12px;display:flex;align-items:center;gap:12px}
+.thumb{width:64px;height:64px;border-radius:8px;object-fit:cover;background:#222;flex:none}
+.card b{display:block;font-size:15px}
+.card small{color:#999}
+button{background:var(--gold);color:#000;border:0;border-radius:10px;padding:12px 16px;font-weight:700;font-size:15px}
+button:disabled{opacity:.35}
+button.ghost{background:transparent;color:var(--gold);border:1px solid var(--gold)}
+.card button{margin-left:auto}
+#result{display:none;border:1px solid var(--gold);display:none;flex-direction:column;align-items:flex-start}
+#shape{font-size:26px;font-weight:700;margin:2px 0}
+#tip{color:#ddd;font-size:14px;margin:6px 0}
+#nums{color:#777;font-size:12px}
+.row{display:flex;gap:10px;margin-top:8px}
+.row button{flex:1}
+#cam{position:fixed;inset:0;background:#000;display:none;z-index:9}
+#cam video{width:100%;height:100%;object-fit:cover}
+.oval{position:absolute;left:16%;right:16%;top:12%;bottom:26%;border:3px solid var(--gold);border-radius:50%;pointer-events:none}
+.hint{position:absolute;top:calc(env(safe-area-inset-top) + 12px);left:0;right:0;text-align:center;color:var(--gold);font-weight:600;padding:0 56px;text-shadow:0 1px 4px #000}
+.shutter{position:absolute;bottom:calc(env(safe-area-inset-bottom) + 28px);left:50%;transform:translateX(-50%);width:76px;height:76px;border-radius:50%;background:var(--gold);border:4px solid #fff;padding:0}
+.x,.flip{position:absolute;top:calc(env(safe-area-inset-top) + 8px);width:40px;height:40px;border-radius:50%;background:#000a;color:var(--gold);border:1px solid var(--gold);padding:0;font-size:18px}
+.x{left:10px}.flip{right:10px}
+#toast{position:fixed;left:16px;right:16px;bottom:24px;background:#222;border:1px solid var(--gold);border-radius:10px;padding:12px;display:none;z-index:20;font-size:14px}
+</style>
+</head>
+<body>
+<h1>csvisagismo</h1>
+<div id="status">Carregando IA…</div>
+<div id="steps"></div>
+
+<div id="result" class="card">
+  <small style="color:var(--gold)">Formato do rosto</small>
+  <div id="shape"></div>
+  <div id="tip"></div>
+  <div id="nums"></div>
+</div>
+
+<div class="row">
+  <button id="next" disabled>Continuar</button>
+  <button id="reset" class="ghost">Novo cliente</button>
+</div>
+
+<div id="cam">
+  <video id="video" autoplay playsinline muted></video>
+  <div class="oval"></div>
+  <div class="hint" id="hint"></div>
+  <button class="x" id="close">✕</button>
+  <button class="flip" id="flip">⟲</button>
+  <button class="shutter" id="shot" aria-label="Tirar foto"></button>
+</div>
+<div id="toast"></div>
+
+<script type="module">
+import {FaceLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+
+const $ = id => document.getElementById(id);
+const STEPS = [
+  {id:'front', label:'Frente', hint:'Rosto de frente, olhando para a câmera'},
+  {id:'right', label:'Perfil → (direita da tela)', hint:'Peça ao cliente para virar o rosto para a DIREITA da tela'},
+  {id:'left',  label:'Perfil ← (esquerda da tela)', hint:'Peça ao cliente para virar o rosto para a ESQUERDA da tela'}
+];
+const TIPS = {
+  'Oval':'Formato versátil: quase todos os cortes funcionam. Degradê médio e barba aparada valorizam.',
+  'Redondo':'Alongue o visual: volume no topo, laterais baixas e barba um pouco mais longa no queixo.',
+  'Quadrado':'Suavize os ângulos: topo texturizado, laterais curtas e barba curta bem contornada.',
+  'Retangular':'Evite altura no topo. Laterais com mais volume e barba cheia dão largura.',
+  'Oblongo':'Evite altura no topo. Laterais com mais volume e barba cheia equilibram o rosto.',
+  'Coração (triangular invertido)':'Equilibre a testa larga: franja ou topo médio e barba cheia no queixo.',
+  'Triangular (pera)':'Dê volume ao topo, laterais curtas e barba curta ou rente.',
+  'Diamante':'Mostre as maçãs com laterais curtas e barba que preencha o queixo.'
+};
+const photos = {};
+let frontShape = null, lm = null, stream = null, facing = 'environment', cur = null;
+
+function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3500)}
+
+function render(){
+  $('steps').innerHTML = STEPS.map(s=>`
+    <div class="card">
+      ${photos[s.id]?`<img class="thumb" src="${photos[s.id]}">`:`<div class="thumb"></div>`}
+      <div><b>${s.label}</b><small>${photos[s.id]?'Foto ok':'Pendente'}</small></div>
+      <button data-id="${s.id}">${photos[s.id]?'Refazer':'Foto'}</button>
+    </div>`).join('');
+  document.querySelectorAll('#steps button').forEach(b=>b.onclick=()=>openCam(STEPS.find(s=>s.id===b.dataset.id)));
+  $('next').disabled = Object.keys(photos).length < 3;
+  const r=$('result');
+  if(frontShape){r.style.display='flex';$('shape').textContent=frontShape.shape;$('tip').textContent=TIPS[frontShape.shape]||'';$('nums').textContent=frontShape.nums}
+  else r.style.display='none';
+}
+
+async function init(){
+  const fs = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  const base = {modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"};
+  try{ lm = await FaceLandmarker.createFromOptions(fs,{baseOptions:{...base,delegate:"GPU"},runningMode:"IMAGE",numFaces:1}); }
+  catch(e){ lm = await FaceLandmarker.createFromOptions(fs,{baseOptions:{...base,delegate:"CPU"},runningMode:"IMAGE",numFaces:1}); }
+  $('status').textContent = 'IA pronta';
+}
+init().catch(e=>$('status').textContent='Erro ao carregar a IA: '+e.message);
+
+async function startStream(){
+  stopStream();
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1280},height:{ideal:1280}},audio:false});
+    $('video').srcObject = stream;
+  }catch(e){ closeCam(); toast('Não consegui abrir a câmera. Permita o acesso à câmera no navegador.'); }
+}
+function stopStream(){ if(stream){stream.getTracks().forEach(t=>t.stop());stream=null} }
+function openCam(step){ cur=step; $('hint').textContent=step.hint; $('cam').style.display='block'; startStream(); }
+function closeCam(){ stopStream(); $('cam').style.display='none'; }
+$('close').onclick = closeCam;
+$('flip').onclick = ()=>{ facing = facing==='environment'?'user':'environment'; startStream(); };
+
+function classify(L,w,h){
+  const P=i=>({x:L[i].x*w,y:L[i].y*h});
+  const d=(a,b)=>Math.hypot(P(a).x-P(b).x,P(a).y-P(b).y);
+  const cheek=d(234,454), height=d(10,152), fore=d(103,332), jaw=d(172,397);
+  const ratio=height/cheek, fr=fore/cheek, jr=jaw/cheek;
+  const off=(P(1).x-P(234).x)/(P(454).x-P(234).x)-0.5; // posição do nariz entre as maçãs
+  let shape;
+  if(ratio>=1.5) shape='Oblongo';
+  else if(jr>=.86 && fr>=.80) shape = ratio<1.3?'Quadrado':'Retangular';
+  else if(fr-jr>.08) shape='Coração (triangular invertido)';
+  else if(jr-fr>.06) shape='Triangular (pera)';
+  else if(fr<.74 && jr<.74) shape='Diamante';
+  else if(ratio<1.25) shape='Redondo';
+  else shape='Oval';
+  return {shape, off, nums:`altura/largura ${ratio.toFixed(2)} · testa ${fr.toFixed(2)} · mandíbula ${jr.toFixed(2)}`};
+}
+
+$('shot').onclick = ()=>{
+  const v=$('video'); if(!v.videoWidth) return;
+  const s=Math.min(1,1024/Math.max(v.videoWidth,v.videoHeight));
+  const c=document.createElement('canvas'); c.width=Math.round(v.videoWidth*s); c.height=Math.round(v.videoHeight*s);
+  c.getContext('2d').drawImage(v,0,0,c.width,c.height);
+  const step=cur; closeCam();
+  if(!lm) return toast('A IA ainda está carregando. Aguarde um instante e refaça.');
+  let res; try{ res=lm.detect(c) }catch(e){ return toast('Erro na análise: '+e.message) }
+  const L=res.faceLandmarks && res.faceLandmarks[0];
+  if(!L) return toast('Nenhum rosto encontrado. Refaça a foto com boa luz.');
+  const r=classify(L,c.width,c.height);
+  if(step.id==='front' && Math.abs(r.off)>0.08) return toast('Deixe o rosto bem de frente e refaça.');
+  if(step.id==='right' && r.off<0.15) return toast('Vire mais o rosto para a direita da tela e refaça.');
+  if(step.id==='left' && r.off>-0.15) return toast('Vire mais o rosto para a esquerda da tela e refaça.');
+  photos[step.id]=c.toDataURL('image/jpeg',.85);
+  if(step.id==='front') frontShape={shape:r.shape,nums:r.nums};
+  render();
+};
+
+$('next').onclick = ()=>toast('Próxima etapa: escolher estilos e gerar variações.');
+$('reset').onclick = ()=>{ for(const k in photos) delete photos[k]; frontShape=null; render(); };
+
+render();
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
